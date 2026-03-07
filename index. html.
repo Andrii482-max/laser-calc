@@ -1,201 +1,53 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Laser Calc PRO v2.1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Calc</title>
     <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.min.js"></script>
     <style>
-        :root { --primary: #00ff41; --bg: #0a0a0a; --panel: #1a1a1a; }
-        body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; touch-action: none; }
-        .header { padding: 8px; text-align: center; border-bottom: 1px solid #333; font-size: 12px; letter-spacing: 1px; }
-        #canvas-container { flex-grow: 1; position: relative; background: #000; overflow: hidden; cursor: move; }
-        canvas { width: 100%; height: 100%; display: block; }
-        .ui-panel { background: var(--panel); padding: 12px; border-radius: 15px 15px 0 0; box-shadow: 0 -5px 15px rgba(0,0,0,0.5); z-index: 10; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .field { display: flex; flex-direction: column; }
-        label { font-size: 10px; color: #888; margin-bottom: 2px; }
-        input { background: #222; border: 1px solid #444; color: var(--primary); padding: 8px; border-radius: 6px; font-size: 14px; outline: none; }
-        .results-bar { grid-column: span 2; display: flex; justify-content: space-between; padding: 8px; background: #000; border-radius: 8px; border: 1px solid #333; margin: 4px 0; }
-        .res-item { text-align: center; flex: 1; }
-        .res-item small { display: block; font-size: 9px; color: #777; }
-        .price-tag { font-size: 24px; font-weight: bold; color: var(--primary); text-align: center; margin-top: 5px; }
-        .btn-file { grid-column: span 2; background: #222; padding: 10px; text-align: center; border-radius: 8px; border: 1px dashed var(--primary); margin-bottom: 8px; font-size: 13px; display: block; }
-        input[type="file"] { display: none; }
+        body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
+        .box { background: #1e1e1e; border: 1px solid #444; padding: 20px; border-radius: 15px; }
+        .btn { background: #00ff41; color: black; padding: 15px; display: block; border-radius: 10px; font-weight: bold; margin-bottom: 20px; cursor: pointer; }
+        input { width: 100%; background: #333; border: 1px solid #555; color: white; padding: 10px; margin: 10px 0; border-radius: 5px; }
     </style>
 </head>
 <body>
 
-<div class="header">LASER PREVIEW & CALC</div>
-
-<div id="canvas-container">
-    <canvas id="dxf-canvas"></canvas>
-</div>
-
-<div class="ui-panel">
-    <label class="btn-file" for="dxf-file">📂 ОБРАТИ DXF ФАЙЛ</label>
-    <input type="file" id="dxf-file" accept=".dxf">
-
-    <div class="grid">
-        <div class="field">
-            <label>Бажана ВИСОТА (мм)</label>
-            <input type="number" id="target-h" placeholder="Авто">
-        </div>
-        <div class="field">
-            <label>Мікроперетинки (шт)</label>
-            <input type="number" id="micro-tabs" value="0">
-        </div>
-
-        <div class="results-bar">
-            <div class="res-item"><small>Габарити</small><span id="out-dim" style="color:var(--primary)">-</span></div>
-            <div class="res-item"><small>Різ (м)</small><span id="out-len" style="color:var(--primary)">0</span></div>
-            <div class="res-item"><small>Врізки</small><span id="out-pierce" style="color:var(--primary)">0</span></div>
-        </div>
-
-        <div class="field">
-            <label>Ціна м/п (грн)</label>
-            <input type="number" id="p-meter" value="25">
-        </div>
-        <div class="field">
-            <label>Ціна врізки (грн)</label>
-            <input type="number" id="p-pierce" value="2">
-        </div>
+<div class="box">
+    <h2>ЛАЗЕРНИЙ КАЛЬКУЛЯТОР</h2>
+    <label class="btn" for="dxf">📁 ЗАВАНТАЖИТИ DXF</label>
+    <input type="file" id="dxf" style="display:none">
+    
+    <label>Ціна за метр:</label>
+    <input type="number" id="price" value="25">
+    
+    <div id="res" style="margin-top:20px; font-size: 20px; color: #00ff41;">
+        Очікування файлу...
     </div>
-
-    <div class="price-tag"><span id="total-price">0</span> <small style="font-size: 12px; color:#888">грн</small></div>
 </div>
 
 <script>
-    const canvas = document.getElementById('dxf-canvas');
-    const ctx = canvas.getContext('2d');
-    let dxfData = null;
-    let rawStats = { len: 0, pierces: 0, w: 0, h: 0, minX: 0, minY: 0 };
-    
-    // Стан камери (зум та панорамування)
-    let camera = { x: 0, y: 0, zoom: 1 };
-    let lastTouch = [];
-
-    // Завантаження збережених цін
-    ['p-meter', 'p-pierce'].forEach(id => {
-        const saved = localStorage.getItem(id);
-        if(saved) document.getElementById(id).value = saved;
-    });
-
-    document.getElementById('dxf-file').onchange = function(e) {
+    document.getElementById('dxf').onchange = function(e) {
         const reader = new FileReader();
         reader.onload = function(res) {
             try {
                 const parser = new DxfParser();
                 const dxf = parser.parseSync(res.target.result);
-                dxfData = dxf;
-                analyzeDXF(dxf);
-                resetCamera();
-                calculate();
-                draw();
-            } catch (err) { alert("Помилка DXF: " + err.message); }
+                let len = 0;
+                dxf.entities.forEach(ent => {
+                    if(ent.type === 'LINE') {
+                        len += Math.hypot(ent.vertices[1].x - ent.vertices[0].x, ent.vertices[1].y - ent.vertices[0].y);
+                    }
+                });
+                const totalLen = (len / 1000).toFixed(2);
+                const price = document.getElementById('price').value;
+                document.getElementById('res').innerHTML = `Різ: ${totalLen} м <br> Сума: ${Math.round(totalLen * price)} грн`;
+            } catch (err) { alert("Помилка файлу"); }
         };
         reader.readAsText(e.target.files[0]);
     };
-
-    function analyzeDXF(dxf) {
-        let len = 0, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        dxf.entities.forEach(ent => {
-            if(ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-                const vertices = ent.vertices || ent.points;
-                for(let i=0; i < vertices.length - 1; i++) {
-                    len += Math.hypot(vertices[i+1].x - vertices[i].x, vertices[i+1].y - vertices[i].y);
-                    [vertices[i], vertices[i+1]].forEach(v => {
-                        minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
-                        minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
-                    });
-                }
-            } else if(ent.type === 'CIRCLE') {
-                len += 2 * Math.PI * ent.radius;
-                minX = Math.min(minX, ent.center.x - ent.radius); maxX = Math.max(maxX, ent.center.x + ent.radius);
-                minY = Math.min(minY, ent.center.y - ent.radius); maxY = Math.max(maxY, ent.center.y + ent.radius);
-            }
-        });
-        rawStats = { len, pierces: dxf.entities.length, w: maxX - minX, h: maxY - minY, minX, minY };
-        document.getElementById('target-h').value = Math.round(rawStats.h);
-    }
-
-    function resetCamera() {
-        canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-        const scale = Math.min(canvas.width / rawStats.w, canvas.height / rawStats.h) * 0.8;
-        camera.zoom = scale;
-        camera.x = canvas.width/2 - (rawStats.minX + rawStats.w/2) * scale;
-        camera.y = canvas.height/2 + (rawStats.minY + rawStats.h/2) * scale;
-    }
-
-    function draw() {
-        if(!dxfData) return;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.translate(camera.x, camera.y);
-        ctx.scale(camera.zoom, -camera.zoom); // Інверсія Y для CAD-координат
-
-        ctx.strokeStyle = '#00ff41';
-        ctx.lineWidth = 1 / camera.zoom;
-        
-        dxfData.entities.forEach(ent => {
-            ctx.beginPath();
-            if(ent.type === 'LINE' || ent.type === 'LWPOLYLINE') {
-                const v = ent.vertices;
-                ctx.moveTo(v[0].x, v[0].y);
-                for(let i=1; i<v.length; i++) ctx.lineTo(v[i].x, v[i].y);
-            } else if(ent.type === 'CIRCLE') {
-                ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, Math.PI*2);
-            }
-            ctx.stroke();
-        });
-        requestAnimationFrame(draw);
-    }
-
-    function calculate() {
-        if(!dxfData) return;
-        const targetH = parseFloat(document.getElementById('target-h').value) || rawStats.h;
-        const scale = targetH / rawStats.h;
-        const currentLen = ((rawStats.len * scale) / 1000).toFixed(2);
-        const tabs = parseInt(document.getElementById('micro-tabs').value) || 0;
-        const pierces = rawStats.pierces + tabs;
-        
-        const pM = parseFloat(document.getElementById('p-meter').value) || 0;
-        const pP = parseFloat(document.getElementById('p-pierce').value) || 0;
-        localStorage.setItem('p-meter', pM); localStorage.setItem('p-pierce', pP);
-
-        document.getElementById('out-dim').innerText = `${Math.round(rawStats.w * scale)}x${Math.round(targetH)}`;
-        document.getElementById('out-len').innerText = currentLen;
-        document.getElementById('out-pierce').innerText = pierces;
-        document.getElementById('total-price').innerText = Math.round((currentLen * pM) + (pierces * pP));
-    }
-
-    // ОБРОБКА ТАЧ-ПОДІЙ (Zoom & Pan)
-    canvas.addEventListener('touchstart', e => { lastTouch = e.touches; }, {passive: false});
-    canvas.addEventListener('touchmove', e => {
-        e.preventDefault();
-        const touches = e.touches;
-        if (touches.length === 1 && lastTouch.length === 1) { // Pan
-            camera.x += touches[0].pageX - lastTouch[0].pageX;
-            camera.y += touches[0].pageY - lastTouch[0].pageY;
-        } else if (touches.length === 2 && lastTouch.length === 2) { // Zoom
-            const lastDist = Math.hypot(lastTouch[0].pageX - lastTouch[1].pageX, lastTouch[0].pageY - lastTouch[1].pageY);
-            const dist = Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
-            const zoomFactor = dist / lastDist;
-            camera.zoom *= zoomFactor;
-            // Центрування зуму
-            const midX = (touches[0].pageX + touches[1].pageX) / 2;
-            const midY = (touches[0].pageY + touches[1].pageY) / 2;
-            camera.x = midX - (midX - camera.x) * zoomFactor;
-            camera.y = midY - (midY - camera.y) * zoomFactor;
-        }
-        lastTouch = touches;
-    }, {passive: false});
-
-    ['target-h', 'micro-tabs', 'p-meter', 'p-pierce'].forEach(id => {
-        document.getElementById(id).oninput = calculate;
-    });
-    window.onresize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
 </script>
+
 </body>
 </html>
-
