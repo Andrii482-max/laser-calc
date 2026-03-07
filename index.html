@@ -8,16 +8,17 @@
     <style>
         :root { --neon: #00ff41; --bg: #000; --panel: #111; }
         body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; overflow: hidden; touch-action: none; height: 100vh; display: flex; flex-direction: column; }
-        #canvas-container { flex-grow: 1; position: relative; background: radial-gradient(circle, #111 1px, transparent 1px); background-size: 30px 30px; }
+        #canvas-container { flex-grow: 1; position: relative; background: #000; }
         canvas { width: 100%; height: 100%; display: block; }
-        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; border-top: 1px solid #333; z-index: 10; }
+        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; border-top: 1px solid #333; z-index: 10; box-shadow: 0 -5px 15px rgba(0,0,0,0.5); }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 80%; outline: none; }
+        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 85%; outline: none; }
         label { font-size: 11px; color: #888; margin-bottom: 4px; display: block; }
         .btn-file { background: var(--neon); color: #000; padding: 12px; text-align: center; border-radius: 8px; font-weight: bold; cursor: pointer; display: block; margin-bottom: 10px; }
-        .stats-bar { grid-column: span 2; display: flex; justify-content: space-between; background: #000; padding: 10px; border-radius: 10px; border: 1px solid #222; margin: 5px 0; font-size: 13px; }
+        .btn-reset { background: #444; color: #fff; padding: 5px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; }
+        .stats-bar { grid-column: span 2; display: flex; justify-content: space-between; background: #000; padding: 10px; border-radius: 10px; border: 1px solid #222; margin: 5px 0; font-size: 13px; align-items: center; }
         .total { font-size: 24px; color: var(--neon); text-align: center; font-weight: bold; margin-top: 10px; border-top: 1px solid #222; padding-top: 10px; }
-        .tool-hint { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 12px; color: var(--neon); }
+        .tool-hint { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 11px; color: var(--neon); pointer-events: none; }
     </style>
 </head>
 <body>
@@ -41,9 +42,8 @@
             <input type="number" id="mt" value="0">
         </div>
         <div class="stats-bar">
-            <div>Ш: <span id="out-w">-</span></div>
-            <div>Різ: <span id="out-l">0</span> м</div>
-            <div>Врізки: <span id="out-p">0</span></div>
+            <div><span id="out-w">-</span> | <span id="out-l">0</span> м | <span id="out-p">0</span> врізок</div>
+            <button class="btn-reset" onclick="resetFile()">Скинути</button>
         </div>
         <div class="field">
             <label>Ціна м/п</label>
@@ -59,10 +59,9 @@
 
 <script>
     const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
-    let entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
+    let originalEntities = [], entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
     let cam = { x: 0, y: 0, z: 1 }, lastT = [];
 
-    // Завантаження збережених цін
     ['pm', 'pp'].forEach(id => {
         const s = localStorage.getItem(id);
         if(s) document.getElementById(id).value = s;
@@ -71,22 +70,44 @@
     document.getElementById('f').onchange = e => {
         const r = new FileReader();
         r.onload = ev => {
-            const p = new DxfParser();
             try {
+                const p = new DxfParser();
                 const dxf = p.parseSync(ev.target.result);
-                entities = dxf.entities.filter(ent => ent.type === 'LINE' || ent.type === 'LWPOLYLINE');
-                process();
-                resetCam();
-                calc();
-            } catch(err) { alert("Помилка файлу"); }
+                originalEntities = dxf.entities.filter(ent => 
+                    ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC'].includes(ent.type)
+                );
+                resetFile();
+            } catch(err) { alert("Помилка DXF. Збережіть у форматі AutoCAD 2000/R12"); }
         };
         r.readAsText(e.target.files[0]);
     };
 
+    function resetFile() {
+        entities = JSON.parse(JSON.stringify(originalEntities));
+        process();
+        resetCam();
+        calc();
+    }
+
+    function getPoints(e) {
+        if (e.vertices) return e.vertices;
+        if (e.type === 'CIRCLE' || e.type === 'ARC') {
+            let pts = [], s = e.startAngle || 0, f = e.endAngle || Math.PI*2;
+            if (f < s) f += Math.PI*2;
+            const steps = e.type === 'CIRCLE' ? 32 : 16;
+            for (let i=0; i<=steps; i++) {
+                let a = s + (i/steps)*(f-s);
+                pts.push({ x: e.center.x + Math.cos(a)*e.radius, y: e.center.y + Math.sin(a)*e.radius });
+            }
+            return pts;
+        }
+        return [];
+    }
+
     function process() {
         let l = 0, xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
         entities.forEach(e => {
-            const v = e.vertices;
+            const v = getPoints(e);
             for(let i=0; i<v.length-1; i++) {
                 l += Math.hypot(v[i+1].x-v[i].x, v[i+1].y-v[i].y);
                 [v[i], v[i+1]].forEach(p => {
@@ -96,12 +117,13 @@
             }
         });
         stats = { l, w: xmax-xmin, h: ymax-ymin, minX: xmin, minY: ymin };
-        document.getElementById('th').value = Math.round(stats.h);
+        if (isFinite(stats.h)) document.getElementById('th').value = Math.round(stats.h);
     }
 
     function resetCam() {
         canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.7;
+        if (!isFinite(stats.w)) return;
+        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.8;
         cam.x = canvas.width/2 - (stats.minX + stats.w/2) * cam.z;
         cam.y = canvas.height/2 + (stats.minY + stats.h/2) * cam.z;
     }
@@ -109,13 +131,14 @@
     function draw() {
         ctx.setTransform(1,0,0,1,0,0);
         ctx.clearRect(0,0,canvas.width,canvas.height);
-        if(!entities.length) return;
+        if(!entities.length) { requestAnimationFrame(draw); return; }
         ctx.translate(cam.x, cam.y);
         ctx.scale(cam.z, -cam.z);
         ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 1/cam.z;
         entities.forEach(e => {
-            ctx.beginPath(); ctx.moveTo(e.vertices[0].x, e.vertices[0].y);
-            for(let i=1; i<e.vertices.length; i++) ctx.lineTo(e.vertices[i].x, e.vertices[i].y);
+            const v = getPoints(e);
+            ctx.beginPath(); ctx.moveTo(v[0].x, v[0].y);
+            for(let i=1; i<v.length; i++) ctx.lineTo(v[i].x, v[i].y);
             ctx.stroke();
         });
         requestAnimationFrame(draw);
@@ -123,37 +146,38 @@
     draw();
 
     function calc() {
+        if (!isFinite(stats.h) || stats.h === 0) return;
         const th = parseFloat(document.getElementById('th').value) || stats.h;
         const s = th / stats.h;
         const curL = ((stats.l * s) / 1000).toFixed(2);
         const mt = parseInt(document.getElementById('mt').value) || 0;
         const p = entities.length + mt;
-        const vM = parseFloat(document.getElementById('pm').value);
-        const vP = parseFloat(document.getElementById('pp').value);
-        
+        const vM = parseFloat(document.getElementById('pm').value) || 0;
+        const vP = parseFloat(document.getElementById('pp').value) || 0;
         localStorage.setItem('pm', vM); localStorage.setItem('pp', vP);
-        
         document.getElementById('out-w').innerText = Math.round(stats.w * s) + 'мм';
         document.getElementById('out-l').innerText = curL;
         document.getElementById('out-p').innerText = p;
         document.getElementById('res').innerText = Math.round(curL * vM + p * vP);
     }
 
-    // Керування (Zoom/Pan/Delete)
     canvas.addEventListener('touchstart', e => { 
         lastT = Array.from(e.touches);
-        if(e.touches.length === 1) { // Функція видалення (ластик)
+        if(e.touches.length === 1) {
             const rect = canvas.getBoundingClientRect();
             const tx = (e.touches[0].clientX - rect.left - cam.x) / cam.z;
             const ty = (e.touches[0].clientY - rect.top - cam.y) / -cam.z;
-            entities = entities.filter(ent => {
-                const v = ent.vertices[0], v2 = ent.vertices[1];
-                const d = Math.abs((v2.y-v.y)*tx - (v2.x-v.x)*ty + v2.x*v.y - v2.y*v.x) / Math.hypot(v2.y-v.y, v2.x-v.x);
-                return d > 5/cam.z; // Видаляємо якщо тап близько до лінії
+            let idx = -1;
+            entities.forEach((ent, i) => {
+                const v = getPoints(ent);
+                for(let j=0; j<v.length-1; j++) {
+                    const d = Math.abs((v[j+1].y-v[j].y)*tx - (v[j+1].x-v[j].x)*ty + v[j+1].x*v[j].y - v[j+1].y*v[j].x) / Math.hypot(v[j+1].y-v[j].y, v[j+1].x-v[j].x);
+                    if (d < 15/cam.z) idx = i;
+                }
             });
-            process(); calc();
+            if(idx !== -1) { entities.splice(idx, 1); process(); calc(); }
         }
-    });
+    }, {passive: false});
 
     canvas.addEventListener('touchmove', e => {
         e.preventDefault();
@@ -168,7 +192,7 @@
             cam.x += t[0].pageX - lastT[0].pageX; cam.y += t[0].pageY - lastT[0].pageY;
         }
         lastT = t;
-    });
+    }, {passive: false});
 
     ['th', 'mt', 'pm', 'pp'].forEach(id => document.getElementById(id).oninput = calc);
 </script>
