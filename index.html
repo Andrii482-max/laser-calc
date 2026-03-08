@@ -3,32 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Laser Pro Calc Ultra</title>
+    <title>Laser Pro Calc 2026</title>
     <script src="https://unpkg.com/dxf-parser@1.1.2/dist/dxf-parser.min.js"></script>
     <style>
         :root { --neon: #00ff41; --bg: #000; --panel: #111; }
         body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; overflow: hidden; touch-action: none; height: 100vh; display: flex; flex-direction: column; }
-        #canvas-container { flex-grow: 1; position: relative; background: #000; border-bottom: 1px solid #333; }
+        #canvas-container { flex-grow: 1; position: relative; background: #000; }
         canvas { width: 100%; height: 100%; display: block; }
-        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; z-index: 10; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 85%; }
-        label { font-size: 11px; color: #888; margin-bottom: 2px; display: block; }
+        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; border-top: 1px solid #333; z-index: 10; box-shadow: 0 -5px 15px rgba(0,0,0,0.5); }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 85%; outline: none; }
+        label { font-size: 11px; color: #888; margin-bottom: 4px; display: block; }
         .btn-file { background: var(--neon); color: #000; padding: 12px; text-align: center; border-radius: 8px; font-weight: bold; cursor: pointer; display: block; margin-bottom: 10px; }
-        .stats-bar { grid-column: span 2; display: flex; justify-content: space-between; background: #050505; padding: 10px; border-radius: 10px; border: 1px solid #222; margin: 5px 0; font-size: 13px; align-items: center; }
-        .total { font-size: 26px; color: var(--neon); text-align: center; font-weight: bold; margin-top: 5px; }
-        .tool-hint { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 5px 10px; border-radius: 5px; font-size: 11px; color: var(--neon); pointer-events: none; border: 1px solid #333; }
+        .btn-reset { background: #444; color: #fff; padding: 5px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; }
+        .stats-bar { grid-column: span 2; display: flex; justify-content: space-between; background: #000; padding: 10px; border-radius: 10px; border: 1px solid #222; margin: 5px 0; font-size: 13px; align-items: center; }
+        .total { font-size: 24px; color: var(--neon); text-align: center; font-weight: bold; margin-top: 10px; border-top: 1px solid #222; padding-top: 10px; }
     </style>
 </head>
 <body>
 
 <div id="canvas-container">
-    <div class="tool-hint">Zoom: 2 пальці | Видалити: тап</div>
     <canvas id="c"></canvas>
 </div>
 
 <div class="ui">
-    <label class="btn-file" for="f">📂 ВІДКРИТИ DXF (SolidWorks)</label>
+    <label class="btn-file" for="f">📂 ВІДКРИТИ DXF</label>
     <input type="file" id="f" accept=".dxf" style="display:none">
 
     <div class="grid">
@@ -36,7 +35,7 @@
         <div class="field"><label>Перетинки (шт)</label><input type="number" id="mt" value="0"></div>
         <div class="stats-bar">
             <div><span id="out-w">-</span> | <span id="out-l">0</span> м | <span id="out-p">0</span> врізок</div>
-            <button style="background:#444;color:#fff;border:none;padding:5px 10px;border-radius:5px" onclick="resetFile()">Скинути</button>
+            <button class="btn-reset" onclick="resetFile()">Скинути</button>
         </div>
         <div class="field"><label>Ціна м/п</label><input type="number" id="pm" value="25"></div>
         <div class="field"><label>Ціна врізки</label><input type="number" id="pp" value="2"></div>
@@ -46,40 +45,37 @@
 
 <script>
     const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
-    let rawEntities = [], entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
+    let originalEntities = [], entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
     let cam = { x: 0, y: 0, z: 1 }, lastT = [];
 
     document.getElementById('f').onchange = e => {
         const r = new FileReader();
         r.onload = ev => {
             try {
-                let text = ev.target.result;
-                if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-                const parser = new DxfParser();
-                const dxf = parser.parseSync(text);
+                let data = ev.target.result;
+                // Очистка від сміття SolidWorks
+                if (data.charCodeAt(0) === 0xFEFF) data = data.slice(1);
                 
-                rawEntities = [];
-                // Функція для розпаковки блоків (важливо для SolidWorks)
+                const parser = new DxfParser();
+                const dxf = parser.parseSync(data);
+                
+                originalEntities = [];
+                // Розпаковка блоків
                 const extract = (ents) => {
                     ents.forEach(ent => {
-                        if (ent.type === 'INSERT' && dxf.blocks[ent.name]) {
-                            extract(dxf.blocks[ent.name].entities);
-                        } else if (['LINE','LWPOLYLINE','POLYLINE','CIRCLE','ARC','SPLINE'].includes(ent.type)) {
-                            rawEntities.push(ent);
-                        }
+                        if (ent.type === 'INSERT' && dxf.blocks[ent.name]) extract(dxf.blocks[ent.name].entities);
+                        else if (['LINE','LWPOLYLINE','POLYLINE','CIRCLE','ARC','SPLINE'].includes(ent.type)) originalEntities.push(ent);
                     });
                 };
                 extract(dxf.entities);
-                
-                if (rawEntities.length === 0) alert("Файл порожній або об'єкти не підтримуються");
                 resetFile();
-            } catch(err) { alert("Помилка! У SolidWorks при збереженні оберіть: DXF -> Options -> ASCII"); }
+            } catch(err) { alert("Помилка! Спробуйте зберегти DXF як ASCII (версія 2013 або R12)"); }
         };
         r.readAsText(e.target.files[0]);
     };
 
     function resetFile() {
-        entities = JSON.parse(JSON.stringify(rawEntities));
+        entities = JSON.parse(JSON.stringify(originalEntities));
         process(); resetCam(); calc();
     }
 
@@ -146,7 +142,7 @@
         document.getElementById('out-w').innerText = Math.round(stats.w * s) + 'мм';
         document.getElementById('out-l').innerText = curL;
         document.getElementById('out-p').innerText = p;
-        document.getElementById('res').innerText = Math.round(curL * (document.getElementById('pm').value) + p * (document.getElementById('pp').value));
+        document.getElementById('res').innerText = Math.round(curL * document.getElementById('pm').value + p * document.getElementById('pp').value);
     }
 
     canvas.addEventListener('touchstart', e => { 
@@ -183,6 +179,7 @@
     }, {passive: false});
 
     ['th', 'mt', 'pm', 'pp'].forEach(id => document.getElementById(id).oninput = calc);
+    window.onresize = resetCam;
 </script>
 </body>
 </html>
