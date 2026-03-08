@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Laser Pro Calc</title>
+    <title>Laser Pro Calc 2026</title>
     <script src="https://unpkg.com/dxf-parser@1.1.2/dist/dxf-parser.min.js"></script>
     <style>
         :root { --neon: #00ff41; --bg: #000; --panel: #111; }
@@ -24,21 +24,21 @@
 <body>
 
 <div id="canvas-container">
-    <div class="tool-hint">Zoom: 2 пальці | Видалити лінію: тап</div>
+    <div class="tool-hint">Масштаб: 2 пальці | Видалити лінію: тап</div>
     <canvas id="c"></canvas>
 </div>
 
 <div class="ui">
-    <label class="btn-file" for="f">📂 ЗАВАНТАЖИТИ DXF</label>
+    <label class="btn-file" for="f">📂 ВІДКРИТИ DXF (SolidWorks/AutoCAD)</label>
     <input type="file" id="f" accept=".dxf" style="display:none">
 
     <div class="grid">
         <div class="field">
-            <label>Бажана ВИСОТА (мм)</label>
+            <label>Висота деталі (мм)</label>
             <input type="number" id="th" placeholder="Авто">
         </div>
         <div class="field">
-            <label>Мікроперетинки (шт)</label>
+            <label>Перетинки (шт)</label>
             <input type="number" id="mt" value="0">
         </div>
         <div class="stats-bar">
@@ -46,7 +46,7 @@
             <button class="btn-reset" onclick="resetFile()">Скинути</button>
         </div>
         <div class="field">
-            <label>Ціна м/п</label>
+            <label>Ціна за метр</label>
             <input type="number" id="pm" value="25">
         </div>
         <div class="field">
@@ -71,13 +71,26 @@
         const r = new FileReader();
         r.onload = ev => {
             try {
+                // Очищення файлу від міток SolidWorks та нових версій DXF
+                let rawData = ev.target.result;
+                if (rawData.charCodeAt(0) === 0xFEFF) rawData = rawData.slice(1); // Видалення BOM
+                
                 const p = new DxfParser();
-                const dxf = p.parseSync(ev.target.result);
+                const dxf = p.parseSync(rawData);
+                
+                // Збираємо все, що схоже на лінії, включаючи нові типи поліліній
                 originalEntities = dxf.entities.filter(ent => 
-                    ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC'].includes(ent.type)
+                    ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC', 'SPLINE'].includes(ent.type)
                 );
+                
+                if (originalEntities.length === 0) {
+                    alert("Ліній не знайдено. Переконайтеся, що об'єкти не в блоках.");
+                }
                 resetFile();
-            } catch(err) { alert("Помилка DXF. Збережіть у форматі AutoCAD 2000/R12"); }
+            } catch(err) { 
+                console.error(err);
+                alert("Помилка: Спробуйте зберегти як 'DXF 2013' або 'R12' у SolidWorks."); 
+            }
         };
         r.readAsText(e.target.files[0]);
     };
@@ -94,13 +107,14 @@
         if (e.type === 'CIRCLE' || e.type === 'ARC') {
             let pts = [], s = e.startAngle || 0, f = e.endAngle || Math.PI*2;
             if (f < s) f += Math.PI*2;
-            const steps = e.type === 'CIRCLE' ? 32 : 16;
+            const steps = e.type === 'CIRCLE' ? 40 : 20;
             for (let i=0; i<=steps; i++) {
                 let a = s + (i/steps)*(f-s);
                 pts.push({ x: e.center.x + Math.cos(a)*e.radius, y: e.center.y + Math.sin(a)*e.radius });
             }
             return pts;
         }
+        if (e.type === 'SPLINE' && e.controlPoints) return e.controlPoints; // Базова підтримка сплайнів
         return [];
     }
 
@@ -117,13 +131,13 @@
             }
         });
         stats = { l, w: xmax-xmin, h: ymax-ymin, minX: xmin, minY: ymin };
-        if (isFinite(stats.h)) document.getElementById('th').value = Math.round(stats.h);
+        if (isFinite(stats.h) && stats.h > 0) document.getElementById('th').value = Math.round(stats.h);
     }
 
     function resetCam() {
         canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-        if (!isFinite(stats.w)) return;
-        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.8;
+        if (!isFinite(stats.w) || stats.w === 0) return;
+        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.85;
         cam.x = canvas.width/2 - (stats.minX + stats.w/2) * cam.z;
         cam.y = canvas.height/2 + (stats.minY + stats.h/2) * cam.z;
     }
@@ -134,9 +148,10 @@
         if(!entities.length) { requestAnimationFrame(draw); return; }
         ctx.translate(cam.x, cam.y);
         ctx.scale(cam.z, -cam.z);
-        ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 1/cam.z;
+        ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 1.5/cam.z;
         entities.forEach(e => {
             const v = getPoints(e);
+            if(v.length < 2) return;
             ctx.beginPath(); ctx.moveTo(v[0].x, v[0].y);
             for(let i=1; i<v.length; i++) ctx.lineTo(v[i].x, v[i].y);
             ctx.stroke();
@@ -146,7 +161,7 @@
     draw();
 
     function calc() {
-        if (!isFinite(stats.h) || stats.h === 0) return;
+        if (!isFinite(stats.h) || stats.h <= 0) return;
         const th = parseFloat(document.getElementById('th').value) || stats.h;
         const s = th / stats.h;
         const curL = ((stats.l * s) / 1000).toFixed(2);
@@ -154,13 +169,16 @@
         const p = entities.length + mt;
         const vM = parseFloat(document.getElementById('pm').value) || 0;
         const vP = parseFloat(document.getElementById('pp').value) || 0;
+        
         localStorage.setItem('pm', vM); localStorage.setItem('pp', vP);
+        
         document.getElementById('out-w').innerText = Math.round(stats.w * s) + 'мм';
         document.getElementById('out-l').innerText = curL;
         document.getElementById('out-p').innerText = p;
         document.getElementById('res').innerText = Math.round(curL * vM + p * vP);
     }
 
+    // Touch events
     canvas.addEventListener('touchstart', e => { 
         lastT = Array.from(e.touches);
         if(e.touches.length === 1) {
@@ -169,32 +187,3 @@
             const ty = (e.touches[0].clientY - rect.top - cam.y) / -cam.z;
             let idx = -1;
             entities.forEach((ent, i) => {
-                const v = getPoints(ent);
-                for(let j=0; j<v.length-1; j++) {
-                    const d = Math.abs((v[j+1].y-v[j].y)*tx - (v[j+1].x-v[j].x)*ty + v[j+1].x*v[j].y - v[j+1].y*v[j].x) / Math.hypot(v[j+1].y-v[j].y, v[j+1].x-v[j].x);
-                    if (d < 15/cam.z) idx = i;
-                }
-            });
-            if(idx !== -1) { entities.splice(idx, 1); process(); calc(); }
-        }
-    }, {passive: false});
-
-    canvas.addEventListener('touchmove', e => {
-        e.preventDefault();
-        const t = Array.from(e.touches);
-        if(t.length === 2 && lastT.length === 2) {
-            const d1 = Math.hypot(lastT[0].pageX-lastT[1].pageX, lastT[0].pageY-lastT[1].pageY);
-            const d2 = Math.hypot(t[0].pageX-t[1].pageX, t[0].pageY-t[1].pageY);
-            const f = d2/d1; cam.z *= f;
-            const mx = (t[0].pageX+t[1].pageX)/2, my = (t[0].pageY+t[1].pageY)/2;
-            cam.x = mx - (mx - cam.x) * f; cam.y = my - (my - cam.y) * f;
-        } else if(t.length === 1 && lastT.length === 1) {
-            cam.x += t[0].pageX - lastT[0].pageX; cam.y += t[0].pageY - lastT[0].pageY;
-        }
-        lastT = t;
-    }, {passive: false});
-
-    ['th', 'mt', 'pm', 'pp'].forEach(id => document.getElementById(id).oninput = calc);
-</script>
-</body>
-</html>
