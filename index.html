@@ -8,34 +8,32 @@
     <style>
         :root { --neon: #00ff41; --bg: #000; --panel: #111; }
         body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; overflow: hidden; touch-action: none; height: 100vh; display: flex; flex-direction: column; }
-        #canvas-container { flex-grow: 1; position: relative; background: #000; }
+        #canvas-container { flex-grow: 1; position: relative; background: #000; border-bottom: 1px solid #333; }
         canvas { width: 100%; height: 100%; display: block; }
-        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; border-top: 1px solid #333; z-index: 10; box-shadow: 0 -5px 15px rgba(0,0,0,0.5); }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 85%; outline: none; }
-        label { font-size: 11px; color: #888; margin-bottom: 4px; display: block; }
+        .ui { background: var(--panel); padding: 15px; border-radius: 20px 20px 0 0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        input { background: #222; border: 1px solid #444; color: var(--neon); padding: 10px; border-radius: 8px; font-size: 16px; width: 85%; }
+        label { font-size: 11px; color: #888; margin-bottom: 2px; display: block; }
         .btn-file { background: var(--neon); color: #000; padding: 12px; text-align: center; border-radius: 8px; font-weight: bold; cursor: pointer; display: block; margin-bottom: 10px; }
-        .btn-reset { background: #444; color: #fff; padding: 5px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; }
-        .stats-bar { grid-column: span 2; display: flex; justify-content: space-between; background: #000; padding: 10px; border-radius: 10px; border: 1px solid #222; margin: 5px 0; font-size: 13px; align-items: center; }
-        .total { font-size: 24px; color: var(--neon); text-align: center; font-weight: bold; margin-top: 10px; border-top: 1px solid #222; padding-top: 10px; }
+        .total { font-size: 26px; color: var(--neon); text-align: center; font-weight: bold; margin-top: 10px; border-top: 1px solid #222; padding-top: 10px; }
+        .stats { grid-column: span 2; display: flex; justify-content: space-between; background: #050505; padding: 10px; border-radius: 8px; font-size: 13px; color: #ccc; }
     </style>
 </head>
 <body>
 
-<div id="canvas-container">
-    <canvas id="c"></canvas>
-</div>
+<div id="canvas-container"><canvas id="c"></canvas></div>
 
 <div class="ui">
-    <label class="btn-file" for="f">📂 ВІДКРИТИ DXF</label>
+    <label class="btn-file" for="f">📂 ВІДКРИТИ ASCII DXF</label>
     <input type="file" id="f" accept=".dxf" style="display:none">
 
     <div class="grid">
         <div class="field"><label>Висота (мм)</label><input type="number" id="th" placeholder="Авто"></div>
         <div class="field"><label>Перетинки (шт)</label><input type="number" id="mt" value="0"></div>
-        <div class="stats-bar">
-            <div><span id="out-w">-</span> | <span id="out-l">0</span> м | <span id="out-p">0</span> врізок</div>
-            <button class="btn-reset" onclick="resetFile()">Скинути</button>
+        <div class="stats">
+            <div><span id="out-w">0</span>мм | <span id="out-l">0</span>м</div>
+            <div><span id="out-p">0</span> врізок</div>
+            <button onclick="resetFile()" style="background:#333;color:#fff;border:none;border-radius:4px;padding:2px 8px">Скинути</button>
         </div>
         <div class="field"><label>Ціна м/п</label><input type="number" id="pm" value="25"></div>
         <div class="field"><label>Ціна врізки</label><input type="number" id="pp" value="2"></div>
@@ -45,47 +43,42 @@
 
 <script>
     const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
-    let originalEntities = [], entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
+    let rawEntities = [], entities = [], stats = { l: 0, w: 0, h: 0, minX: 0, minY: 0 };
     let cam = { x: 0, y: 0, z: 1 }, lastT = [];
 
     document.getElementById('f').onchange = e => {
+        const file = e.target.files[0];
         const r = new FileReader();
         r.onload = ev => {
             try {
-                let data = ev.target.result;
-                // Очистка від сміття SolidWorks
-                if (data.charCodeAt(0) === 0xFEFF) data = data.slice(1);
-                
-                const parser = new DxfParser();
-                const dxf = parser.parseSync(data);
-                
-                originalEntities = [];
-                // Розпаковка блоків
+                let text = ev.target.result;
+                const p = new DxfParser();
+                const dxf = p.parseSync(text);
+                rawEntities = [];
                 const extract = (ents) => {
                     ents.forEach(ent => {
                         if (ent.type === 'INSERT' && dxf.blocks[ent.name]) extract(dxf.blocks[ent.name].entities);
-                        else if (['LINE','LWPOLYLINE','POLYLINE','CIRCLE','ARC','SPLINE'].includes(ent.type)) originalEntities.push(ent);
+                        else if (['LINE','LWPOLYLINE','POLYLINE','CIRCLE','ARC','SPLINE'].includes(ent.type)) rawEntities.push(ent);
                     });
                 };
                 extract(dxf.entities);
                 resetFile();
-            } catch(err) { alert("Помилка! Спробуйте зберегти DXF як ASCII (версія 2013 або R12)"); }
+            } catch(err) { 
+                alert("Помилка! Файл має бути ASCII DXF. У SolidWorks змініть Binary на ASCII у параметрах збереження.");
+            }
         };
-        r.readAsText(e.target.files[0]);
+        r.readAsText(file);
     };
 
-    function resetFile() {
-        entities = JSON.parse(JSON.stringify(originalEntities));
-        process(); resetCam(); calc();
-    }
+    function resetFile() { entities = JSON.parse(JSON.stringify(rawEntities)); process(); resetCam(); calc(); }
 
     function getPoints(e) {
         if (e.vertices) return e.vertices;
         if (e.type === 'CIRCLE' || e.type === 'ARC') {
             let pts = [], s = e.startAngle || 0, f = e.endAngle || Math.PI*2;
             if (f < s) f += Math.PI*2;
-            for (let i=0; i<=24; i++) {
-                let a = s + (i/24)*(f-s);
+            for (let i=0; i<=32; i++) {
+                let a = s + (i/32)*(f-s);
                 pts.push({ x: e.center.x + Math.cos(a)*e.radius, y: e.center.y + Math.sin(a)*e.radius });
             }
             return pts;
@@ -112,14 +105,13 @@
     function resetCam() {
         canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
         if (!isFinite(stats.w) || stats.w === 0) return;
-        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.85;
+        cam.z = Math.min(canvas.width/stats.w, canvas.height/stats.h) * 0.8;
         cam.x = canvas.width/2 - (stats.minX + stats.w/2) * cam.z;
         cam.y = canvas.height/2 + (stats.minY + stats.h/2) * cam.z;
     }
 
     function draw() {
-        ctx.setTransform(1,0,0,1,0,0);
-        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height);
         if(!entities.length) { requestAnimationFrame(draw); return; }
         ctx.translate(cam.x, cam.y); ctx.scale(cam.z, -cam.z);
         ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 1.2/cam.z;
@@ -135,11 +127,10 @@
 
     function calc() {
         if (!isFinite(stats.h) || stats.h <= 0) return;
-        const th = parseFloat(document.getElementById('th').value) || stats.h;
-        const s = th / stats.h;
+        const s = (parseFloat(document.getElementById('th').value) || stats.h) / stats.h;
         const curL = ((stats.l * s) / 1000).toFixed(2);
         const p = entities.length + (parseInt(document.getElementById('mt').value) || 0);
-        document.getElementById('out-w').innerText = Math.round(stats.w * s) + 'мм';
+        document.getElementById('out-w').innerText = Math.round(stats.w * s);
         document.getElementById('out-l').innerText = curL;
         document.getElementById('out-p').innerText = p;
         document.getElementById('res').innerText = Math.round(curL * document.getElementById('pm').value + p * document.getElementById('pp').value);
@@ -149,14 +140,13 @@
         lastT = Array.from(e.touches);
         if(e.touches.length === 1) {
             const rect = canvas.getBoundingClientRect();
-            const tx = (e.touches[0].clientX - rect.left - cam.x) / cam.z;
-            const ty = (e.touches[0].clientY - rect.top - cam.y) / -cam.z;
+            const tx = (e.touches[0].clientX - rect.left - cam.x) / cam.z, ty = (e.touches[0].clientY - rect.top - cam.y) / -cam.z;
             let idx = -1;
             entities.forEach((ent, i) => {
                 const v = getPoints(ent);
                 for(let j=0; j<v.length-1; j++) {
                     const d = Math.abs((v[j+1].y-v[j].y)*tx - (v[j+1].x-v[j].x)*ty + v[j+1].x*v[j].y - v[j+1].y*v[j].x) / Math.hypot(v[j+1].y-v[j].y, v[j+1].x-v[j].x);
-                    if (d < 15/cam.z) idx = i;
+                    if (d < 20/cam.z) idx = i;
                 }
             });
             if(idx !== -1) { entities.splice(idx, 1); process(); calc(); }
@@ -164,17 +154,12 @@
     }, {passive: false});
 
     canvas.addEventListener('touchmove', e => {
-        e.preventDefault();
-        const t = Array.from(e.touches);
+        e.preventDefault(); const t = Array.from(e.touches);
         if(t.length === 2 && lastT.length === 2) {
-            const d1 = Math.hypot(lastT[0].pageX-lastT[1].pageX, lastT[0].pageY-lastT[1].pageY);
-            const d2 = Math.hypot(t[0].pageX-t[1].pageX, t[0].pageY-t[1].pageY);
-            const f = d2/d1; cam.z *= f;
-            const mx = (t[0].pageX+t[1].pageX)/2, my = (t[0].pageY+t[1].pageY)/2;
+            const f = Math.hypot(t[0].pageX-t[1].pageX, t[0].pageY-t[1].pageY) / Math.hypot(lastT[0].pageX-lastT[1].pageX, lastT[0].pageY-lastT[1].pageY);
+            cam.z *= f; const mx = (t[0].pageX+t[1].pageX)/2, my = (t[0].pageY+t[1].pageY)/2;
             cam.x = mx - (mx - cam.x) * f; cam.y = my - (my - cam.y) * f;
-        } else if(t.length === 1 && lastT.length === 1) {
-            cam.x += t[0].pageX - lastT[0].pageX; cam.y += t[0].pageY - lastT[0].pageY;
-        }
+        } else if(t.length === 1 && lastT.length === 1) { cam.x += t[0].pageX - lastT[0].pageX; cam.y += t[0].pageY - lastT[0].pageY; }
         lastT = t;
     }, {passive: false});
 
